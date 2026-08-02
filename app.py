@@ -8,9 +8,9 @@ import pulp
 # ==========================================
 # إعدادات الصفحة
 # ==========================================
-st.set_page_config(page_title="نموذج ليبيا الطاقي 2050 - متقدم", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="مخطط طاقة ليبيا 2050 - متقدم", layout="wide", page_icon="⚡")
 
-st.title(" مخطط طاقة ليبيا 2050 - نظام هجين مع تخزين")
+st.title("⚡ مخطط طاقة ليبيا 2050 - نظام هجين مع تخزين")
 st.markdown("""
 نموذج تخطيط طاقي استراتيجي متطور يحدد السعات المثلى للطاقة الشمسية والغازية 
 **مع بطاريات التخزين** لتلبية الطلب بأقل تكلفة ممكنة باستخدام مكتبة `pulp`.
@@ -19,10 +19,10 @@ st.markdown("""
 # ==========================================
 # الشريط الجانبي (المدخلات)
 # ==========================================
-st.sidebar.header("️ معلمات النموذج")
+st.sidebar.header("⚙️ معلمات النموذج")
 
 # معلمات الطاقة الشمسية
-st.sidebar.subheader("☀️ الطاقة الشمسية")
+st.sidebar.subheader("️ الطاقة الشمسية")
 solar_capex = st.sidebar.slider("CAPEX الشمسي ($/kW)", 500, 2000, 1035)
 solar_opex = st.sidebar.slider("OPEX الشمسي ($/kW/سنة)", 10, 50, 15)
 
@@ -30,9 +30,10 @@ solar_opex = st.sidebar.slider("OPEX الشمسي ($/kW/سنة)", 10, 50, 15)
 st.sidebar.subheader("⛽ الغاز الطبيعي")
 gas_capex = st.sidebar.slider("CAPEX الغاز ($/kW)", 800, 2000, 1150)
 gas_opex = st.sidebar.slider("OPEX الغاز ($/kW/سنة)", 20, 100, 50)
-gas_fuel_cost = st.sidebar.number_input("تكلفة وقود الغاز ($/MWh)", min_value=0, max_value=200, value=50)
+gas_fuel_cost = st.sidebar.number_input("تكلفة وقود الغاز ($/MWh)", min_value=0, max_value=200, value=50, 
+                                        help="استخدم 50 $/MWh كسعر بديل (Opportunity Cost) للتصدير")
 
-# معلمات البطاريات (من ورقة أقيلا ونصار 2026)
+# معلمات البطاريات
 st.sidebar.subheader("🔋 بطاريات التخزين")
 battery_capex = st.sidebar.slider("CAPEX البطاريات ($/kWh)", 200, 500, 300)
 battery_life = st.sidebar.slider("عمر البطارية (سنوات)", 5, 15, 10)
@@ -40,7 +41,7 @@ battery_efficiency = st.sidebar.slider("كفاءة البطارية (%)", 80, 95
 storage_hours = st.sidebar.slider("ساعات التخزين", 2, 8, 4, help="عدد ساعات تغطية الحمل بالبطاريات")
 
 # الطلب
-st.sidebar.subheader(" الطلب على الكهرباء")
+st.sidebar.subheader("📊 الطلب على الكهرباء")
 demand_tripoli = st.sidebar.number_input("طلب طرابلس (MW)", min_value=100, max_value=10000, value=2000)
 demand_sebha = st.sidebar.number_input("طلب سبها (MW)", min_value=100, max_value=5000, value=500)
 
@@ -52,6 +53,10 @@ co2_price = st.sidebar.number_input("سعر الكربون ($/ton CO₂)", min_v
 
 # معامل التنويع
 diversity_factor = st.sidebar.slider("معامل التنويع", 0.7, 1.0, 0.85, 0.05)
+
+# قيد الطاقة المتجددة
+renewable_mandate = st.sidebar.slider("الحد الأدنى للطاقة المتجددة (%)", 0, 100, 30, 
+                                      help="النسبة الدنيا من الطلب التي يجب تغطيتها بالطاقة الشمسية")
 
 run_button = st.sidebar.button(" تشغيل نموذج التحسين", type="primary")
 
@@ -98,6 +103,11 @@ if run_button:
             crf_val = calculate_crf(discount_rate, project_years)
             battery_crf = calculate_crf(discount_rate, battery_life)
             
+            # حساب الطاقة السنوية
+            annual_energy_tripoli = demand_tripoli * hours_per_year * diversity_factor
+            annual_energy_sebha = demand_sebha * hours_per_year * diversity_factor
+            total_annual_energy = annual_energy_tripoli + annual_energy_sebha
+            
             # 4. دالة الهدف: تقليل التكلفة السنوية الإجمالية
             total_cost = (
                 # تكاليف رأس المال السنوية
@@ -118,33 +128,30 @@ if run_button:
             # 5. القيود
             
             # أ) قيد الطاقة السنوية (Energy Balance)
-            # الطاقة الشمسية النهارية + الغاز + البطاريات >= الطلب
             model += (solar_tripoli * cf_solar * hours_per_year + 
-                     gas_tripoli * cf_gas * hours_per_year) >= demand_tripoli * hours_per_year * diversity_factor, "Energy_Tripoli"
+                     gas_tripoli * cf_gas * hours_per_year) >= annual_energy_tripoli, "Energy_Tripoli"
             
             model += (solar_sebha * cf_solar * hours_per_year + 
-                     gas_sebha * cf_gas * hours_per_year) >= demand_sebha * hours_per_year * diversity_factor, "Energy_Sebha"
+                     gas_sebha * cf_gas * hours_per_year) >= annual_energy_sebha, "Energy_Sebha"
             
-            # ب) قيد البطاريات: سعة التخزين
-            # البطاريات يجب أن تخزن فائض الشمس نهاراً
-            solar_surplus_tripoli = solar_tripoli * cf_solar * solar_day_hours - demand_tripoli * solar_day_hours
-            solar_surplus_sebha = solar_sebha * cf_solar * solar_day_hours - demand_sebha * solar_day_hours
-            
-            # ج) قيد تغطية الحمل الليلي
-            # الغاز + البطاريات >= الحمل الليلي
+            # ب) قيد البطاريات: تغطية الحمل الليلي
             model += (gas_tripoli * cf_gas * night_hours + 
                      battery_tripoli * battery_efficiency) >= demand_tripoli * night_hours * diversity_factor, "Night_Tripoli"
             
             model += (gas_sebha * cf_gas * night_hours + 
                      battery_sebha * battery_efficiency) >= demand_sebha * night_hours * diversity_factor, "Night_Sebha"
             
-            # د) قيد سعة البطاريات القصوى
+            # ج) قيد سعة البطاريات القصوى
             model += battery_tripoli <= solar_tripoli * cf_solar * storage_hours, "Max_Battery_Tripoli"
             model += battery_sebha <= solar_sebha * cf_solar * storage_hours, "Max_Battery_Sebha"
             
-            # هـ) قيد التنويع
-            model += solar_tripoli <= 2.0 * demand_tripoli, "Max_Solar_Tripoli"
-            model += solar_sebha <= 2.0 * demand_sebha, "Max_Solar_Sebha"
+            # د) قيد التنويع
+            model += solar_tripoli <= 2.5 * demand_tripoli, "Max_Solar_Tripoli"
+            model += solar_sebha <= 2.5 * demand_sebha, "Max_Solar_Sebha"
+            
+            # هـ) **قيد الطاقة المتجددة الإلزامي** (مهم جداً!)
+            model += (solar_tripoli * cf_solar * hours_per_year + 
+                     solar_sebha * cf_solar * hours_per_year) >= total_annual_energy * (renewable_mandate / 100), "Renewable_Mandate"
             
             # 6. حل النموذج
             model.solve(pulp.PULP_CBC_CMD(msg=False))
@@ -168,9 +175,6 @@ if run_button:
                 
                 solar_energy = total_solar * cf_solar * hours_per_year
                 gas_energy = total_gas * cf_gas * hours_per_year
-                battery_energy = total_battery * battery_efficiency
-                
-                total_demand = (demand_tripoli + demand_sebha) * hours_per_year * diversity_factor
                 
                 # الانبعاثات
                 co2_emissions = calculate_emissions(gas_energy / 1000)  # ton CO₂
@@ -183,10 +187,13 @@ if run_button:
                 
                 total_annual_cost = pulp.value(model.objective)
                 
+                # حساب LCOE الصحيح
+                lcoe = total_annual_cost / (total_annual_energy * 1000)  # $/kWh
+                
                 # ==========================================
                 # الداش بورد - لوحة المؤشرات
                 # ==========================================
-                st.subheader(" لوحة المؤشرات الرئيسية")
+                st.subheader("📊 لوحة المؤشرات الرئيسية")
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("إجمالي السعة المركبة", f"{total_solar + total_gas:.0f} MW")
@@ -197,18 +204,18 @@ if run_button:
                 col5, col6, col7, col8 = st.columns(4)
                 col5.metric("انبعاثات CO₂ السنوية", f"{co2_emissions:.0f} ton")
                 col6.metric("تكلفة الكربون", f"${co2_cost/1e6:.2f}M")
-                col7.metric("LCOE", f"${(total_annual_cost*1e6)/(total_demand):.4f}/kWh")
+                col7.metric("LCOE", f"${lcoe:.4f}/kWh")
                 col8.metric("التوفير vs 100% غاز", f"${(total_annual_cost*0.3)/1e6:.2f}M")
                 
                 # ==========================================
                 # جدول السعات المثلى
                 # ==========================================
-                st.subheader("📋 السعات المثلى المقترحة")
+                st.subheader(" السعات المثلى المقترحة")
                 
                 results_data = {
                     "المنطقة": ["طرابلس", "طرابلس", "طرابلس", "سبها", "سبها", "سبها"],
-                    "التقنية": ["☀️ طاقة شمسية", "⛽ غاز طبيعي", " بطاريات", 
-                              "☀️ طاقة شمسية", "⛽ غاز طبيعي", "🔋 بطاريات"],
+                    "التقنية": ["️ طاقة شمسية", "⛽ غاز طبيعي", "🔋 بطاريات", 
+                              "☀️ طاقة شمسية", " غاز طبيعي", "🔋 بطاريات"],
                     "السعة المثلى": [
                         f"{s_t:.1f} MW", f"{g_t:.1f} MW", f"{b_t:.1f} MWh",
                         f"{s_s:.1f} MW", f"{g_s:.1f} MW", f"{b_s:.1f} MWh"
@@ -228,7 +235,7 @@ if run_button:
                 # ==========================================
                 # الرسوم البيانية
                 # ==========================================
-                st.subheader(" التحليل المرئي")
+                st.subheader("📈 التحليل المرئي")
                 
                 # الرسم 1: توزيع السعات (Bar Chart)
                 fig1 = go.Figure()
@@ -245,9 +252,9 @@ if run_button:
                     marker_color='blue'
                 ))
                 fig1.add_trace(go.Bar(
-                    name='بطاريات',
+                    name='بطاريات (MWh/10)',
                     x=['طرابلس', 'سبها'],
-                    y=[b_t/10, b_s/10],  # تقسيم على 10 للعرض
+                    y=[b_t/10, b_s/10],
                     marker_color='green'
                 ))
                 fig1.update_layout(
@@ -314,21 +321,21 @@ if run_button:
                         f"{gas_only_capacity:.0f}",
                         f"${gas_only_cost/1e6:.2f}",
                         f"{gas_only_co2/1000:.1f}",
-                        f"${(gas_only_cost*1e6)/((demand_tripoli+demand_sebha)*hours_per_year):.4f}",
+                        f"${gas_only_cost/(total_annual_energy*1000):.4f}",
                         f"{(gas_only_capacity*0.01):.1f}"
                     ],
                     "100% شمس (بدون بطاريات)": [
                         f"{solar_only_capacity:.0f}",
                         f"${solar_only_cost/1e6:.2f}",
                         f"{solar_only_co2/1000:.1f}",
-                        f"${(solar_only_cost*1e6)/((demand_tripoli+demand_sebha)*hours_per_year):.4f}",
+                        f"${solar_only_cost/(total_annual_energy*1000):.4f}",
                         f"{(solar_only_capacity*0.02):.1f}"
                     ],
                     "النظام الهجين (مع بطاريات) ✨": [
                         f"{total_solar + total_gas:.0f}",
                         f"${total_annual_cost/1e6:.2f}",
                         f"{co2_emissions/1000:.1f}",
-                        f"${(total_annual_cost*1e6)/total_demand:.4f}",
+                        f"${lcoe:.4f}",
                         f"{(total_solar*0.02 + total_gas*0.01):.1f}"
                     ]
                 }
@@ -381,7 +388,7 @@ if run_button:
                 
                 **3. الجدوى الاقتصادية:**
                 - التكلفة السنوية الإجمالية: **${total_annual_cost/1e6:.2f} مليون**
-                - LCOE: **${(total_annual_cost*1e6)/total_demand:.4f}/kWh**
+                - LCOE: **${lcoe:.4f}/kWh**
                 - التوفير مقارنة بـ 100% غاز: **${((gas_only_cost - total_annual_cost)/1e6):.2f} مليون/سنة**
                 
                 ### 💡 التوصيات:
@@ -392,7 +399,7 @@ if run_button:
                 """)
                 
             else:
-                st.error(" لم يتم العثور على حل أمثل. يرجى مراجعة المدخلات.")
+                st.error("❌ لم يتم العثور على حل أمثل. يرجى مراجعة المدخلات.")
                 
         except Exception as e:
             st.error(f"❌ حدث خطأ: {e}")
